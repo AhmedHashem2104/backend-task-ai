@@ -51,11 +51,13 @@ export default function TovConfigsPage() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <div className="mb-6 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Settings className="h-6 w-6 text-primary" />
-          <h1 className="text-2xl font-bold text-foreground">TOV Configs</h1>
-        </div>
+      <div className="mb-8 flex items-center justify-between">
+        <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-primary/5">
+            <Settings className="h-5 w-5 text-primary" />
+          </div>
+          TOV Configs
+        </h1>
         <Button onClick={() => setShowCreate(true)} size="sm">
           <Plus className="h-4 w-4" />
           New Config
@@ -97,9 +99,9 @@ export default function TovConfigsPage() {
           </Button>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-2">
           {configs.map((config) => (
-            <Card key={config.id}>
+            <Card key={config.id} className="border-border/50 shadow-sm">
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
                   <CardTitle className="text-base">{config.name}</CardTitle>

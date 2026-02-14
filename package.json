@@ -15,7 +15,8 @@
     "build:frontend": "npm run build --prefix frontend",
     "install:all": "npm install && npm install --prefix backend && npm install --prefix frontend",
     "db:generate": "npm run db:generate --prefix backend",
-    "db:migrate": "npm run db:migrate --prefix backend"
+    "db:migrate": "npm run db:migrate --prefix backend",
+    "db:reset": "npm run db:reset --prefix backend"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "db:reset": "node -e \"const fs=require('fs'); const f='./data/sqlite.db'; [f,f+'-wal',f+'-shm',f+'-journal'].forEach(p=>{try{fs.rmSync(p,{force:true})}catch(e){if(e.code==='EPERM'){console.error('ERROR: Stop the dev server first (the DB file is locked).'); process.exit(1)}; throw e}}); console.log('Database deleted.')\" && npm run db:migrate"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
