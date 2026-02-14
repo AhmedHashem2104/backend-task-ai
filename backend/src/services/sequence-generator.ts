@@ -209,6 +209,10 @@ export function buildSequenceResponse(sequenceId: string): SequenceResponse {
   const totalCost = aiGens.reduce((sum, g) => sum + (g.estimated_cost_usd || 0), 0);
   const modelsUsed = [...new Set(aiGens.map((g) => g.model))];
 
+  const prospectAnalysis = sequence.prospect_analysis
+    ? normalizeProspectAnalysis(JSON.parse(sequence.prospect_analysis))
+    : null;
+
   return {
     id: sequence.id,
     status: sequence.status,
@@ -229,9 +233,7 @@ export function buildSequenceResponse(sequenceId: string): SequenceResponse {
     },
     company_context: sequence.company_context,
     sequence_length: sequence.sequence_length,
-    prospect_analysis: sequence.prospect_analysis
-      ? JSON.parse(sequence.prospect_analysis)
-      : null,
+    prospect_analysis: prospectAnalysis,
     overall_confidence: sequence.overall_confidence,
     messages: messages.map((m) => ({
       step_number: m.step_number,
@@ -250,5 +252,20 @@ export function buildSequenceResponse(sequenceId: string): SequenceResponse {
       models_used: modelsUsed,
     },
     created_at: sequence.created_at,
+  };
+}
+
+/**
+ * Ensure all expected array/string fields exist on the prospect analysis,
+ * since smaller LLMs may omit some fields from their JSON output.
+ */
+function normalizeProspectAnalysis(raw: Record<string, unknown>) {
+  return {
+    professional_summary: typeof raw.professional_summary === "string" ? raw.professional_summary : "",
+    key_interests: Array.isArray(raw.key_interests) ? raw.key_interests : [],
+    potential_pain_points: Array.isArray(raw.potential_pain_points) ? raw.potential_pain_points : [],
+    personalization_hooks: Array.isArray(raw.personalization_hooks) ? raw.personalization_hooks : [],
+    recommended_angles: Array.isArray(raw.recommended_angles) ? raw.recommended_angles : [],
+    seniority_level: typeof raw.seniority_level === "string" ? raw.seniority_level : "unknown",
   };
 }

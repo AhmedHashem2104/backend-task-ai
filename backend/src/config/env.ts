@@ -6,7 +6,9 @@ dotenv.config();
 const envSchema = z.object({
   PORT: z.coerce.number().default(3001),
   DATABASE_URL: z.string().default("./data/sqlite.db"),
-  OPENAI_API_KEY: z.string().min(1, "OPENAI_API_KEY is required"),
+  OLLAMA_BASE_URL: z.string().default("http://localhost:11434/v1"),
+  OLLAMA_MODEL: z.string().default("llama3.2"),
+  OPENAI_API_KEY: z.string().default("ollama"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });
 

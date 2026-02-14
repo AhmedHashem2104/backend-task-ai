@@ -5,21 +5,106 @@ import { ProspectAnalysis, SequenceGenerationResult } from "../types";
 import { nanoid } from "nanoid";
 import { db, schema } from "../db";
 
-const openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
+const openai = new OpenAI({
+  apiKey: env.OPENAI_API_KEY,
+  baseURL: env.OLLAMA_BASE_URL,
+  timeout: 120_000, // 2 minutes – Ollama can be slow on first inference
+});
 
-const PRIMARY_MODEL = "gpt-4o-mini";
-const FALLBACK_MODEL = "gpt-4o";
+const PRIMARY_MODEL = env.OLLAMA_MODEL;
+const FALLBACK_MODEL = env.OLLAMA_MODEL; // Ollama uses a single local model
 const MAX_RETRIES = 3;
 
-// Cost per 1M tokens (USD) as of 2024/2025
+// Cost tracking (local Ollama is free, but we keep the structure for logging)
 const COST_TABLE: Record<string, { input: number; output: number }> = {
-  "gpt-4o-mini": { input: 0.15, output: 0.6 },
-  "gpt-4o": { input: 2.5, output: 10.0 },
+  [env.OLLAMA_MODEL]: { input: 0, output: 0 },
 };
 
 function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
-  const rates = COST_TABLE[model] || COST_TABLE["gpt-4o-mini"];
+  const rates = COST_TABLE[model] || { input: 0, output: 0 };
   return (promptTokens * rates.input + completionTokens * rates.output) / 1_000_000;
+}
+
+/**
+ * Extract and parse JSON from an AI response that may contain markdown fences,
+ * preamble text, trailing commas, or other common LLM quirks.
+ */
+function parseJSONFromLLM(raw: string): unknown {
+  console.log("[AI] Raw LLM response length:", raw.length);
+  console.log("[AI] Raw LLM response (first 500 chars):", raw.slice(0, 500));
+
+  // Step 1: Try direct parse first (fast path)
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // continue to extraction
+  }
+
+  // Step 2: Strip markdown code fences (```json ... ``` or ``` ... ```)
+  let cleaned = raw;
+  const codeBlockMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (codeBlockMatch) {
+    cleaned = codeBlockMatch[1].trim();
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      // continue
+    }
+  }
+
+  // Step 3: Extract the outermost { ... } from the string
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = raw.slice(firstBrace, lastBrace + 1);
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      // continue to fixups
+    }
+  }
+
+  // Step 4: Aggressive fixups for common LLM JSON mistakes
+  // Remove trailing commas before } or ]
+  cleaned = cleaned.replace(/,\s*([\]}])/g, "$1");
+  // Remove control characters (except newline/tab)
+  cleaned = cleaned.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+  // Fix single-quoted strings → double-quoted
+  cleaned = cleaned.replace(/'/g, '"');
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // continue
+  }
+
+  // Step 5: Try to fix truncated JSON by closing open braces/brackets
+  let braceCount = 0;
+  let bracketCount = 0;
+  for (const ch of cleaned) {
+    if (ch === "{") braceCount++;
+    if (ch === "}") braceCount--;
+    if (ch === "[") bracketCount++;
+    if (ch === "]") bracketCount--;
+  }
+  let patched = cleaned;
+  while (bracketCount > 0) {
+    patched += "]";
+    bracketCount--;
+  }
+  while (braceCount > 0) {
+    patched += "}";
+    braceCount--;
+  }
+  // Remove trailing commas again after patching
+  patched = patched.replace(/,\s*([\]}])/g, "$1");
+
+  try {
+    return JSON.parse(patched);
+  } catch (e) {
+    console.error("[AI] All JSON parse attempts failed. Cleaned text (first 1000 chars):", patched.slice(0, 1000));
+    throw e;
+  }
 }
 
 /**
@@ -30,9 +115,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Call OpenAI with retry logic and fallback model support
+ * Call Ollama (OpenAI-compatible API) with retry logic
  */
-async function callOpenAI(
+async function callOllama(
   messages: OpenAI.Chat.ChatCompletionMessageParam[],
   sequenceId: string,
   generationType: string,
@@ -49,6 +134,8 @@ async function callOpenAI(
     const startTime = Date.now();
 
     try {
+      console.log(`[AI] Attempt ${attempt}/${MAX_RETRIES} – model: ${model}, type: ${generationType}`);
+
       const response = await openai.chat.completions.create({
         model,
         messages,
@@ -60,6 +147,8 @@ async function callOpenAI(
       const latencyMs = Date.now() - startTime;
       const content = response.choices[0]?.message?.content || "{}";
       const usage = response.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
+      console.log(`[AI] Success in ${latencyMs}ms, response length: ${content.length}`);
 
       // Log successful generation
       db.insert(schema.aiGenerations)
@@ -86,7 +175,7 @@ async function callOpenAI(
       lastError = error instanceof Error ? error : new Error(String(error));
 
       console.error(
-        `[AI] Attempt ${attempt}/${MAX_RETRIES} failed (${model}):`,
+        `[AI] Attempt ${attempt}/${MAX_RETRIES} failed (${model}) after ${latencyMs}ms:`,
         lastError.message
       );
 
@@ -111,12 +200,6 @@ async function callOpenAI(
         await sleep(backoffMs);
       }
     }
-  }
-
-  // If primary model exhausted retries, try fallback
-  if (model === PRIMARY_MODEL) {
-    console.log(`[AI] Trying fallback model: ${FALLBACK_MODEL}`);
-    return callOpenAI(messages, sequenceId, generationType, FALLBACK_MODEL);
   }
 
   throw new AppError(502, `AI generation failed after ${MAX_RETRIES} retries: ${lastError?.message}`);
@@ -144,38 +227,26 @@ export async function analyzeProspect(
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     {
       role: "system",
-      content: `You are an expert sales researcher and B2B outreach strategist. Analyze the following LinkedIn prospect profile and provide a structured analysis for personalized outreach.
+      content: `You are a sales researcher. You MUST respond with ONLY a JSON object, no other text.
 
-Your company context: "${companyContext}"
+Company context: "${companyContext}"
 
-Respond with a JSON object containing:
-{
-  "professional_summary": "2-3 sentence summary of their career and current role",
-  "key_interests": ["list of professional interests based on their profile"],
-  "potential_pain_points": ["business challenges they likely face given their role and industry"],
-  "personalization_hooks": [
-    {
-      "hook": "specific detail to reference",
-      "source": "where in their profile this came from",
-      "relevance": "why this is relevant to your outreach"
-    }
-  ],
-  "recommended_angles": ["messaging angles most likely to resonate"],
-  "seniority_level": "entry|mid|senior|executive"
-}`,
+Return this exact JSON structure:
+{"professional_summary":"summary here","key_interests":["interest1"],"potential_pain_points":["pain1"],"personalization_hooks":[{"hook":"detail","source":"profile section","relevance":"why relevant"}],"recommended_angles":["angle1"],"seniority_level":"senior"}`,
     },
     {
       role: "user",
-      content: `Analyze this prospect for personalized outreach:\n\n${profileSummary}`,
+      content: `Analyze this prospect profile and return JSON:\n\n${profileSummary}`,
     },
   ];
 
-  const result = await callOpenAI(messages, sequenceId, "prospect_analysis");
+  const result = await callOllama(messages, sequenceId, "prospect_analysis");
 
   try {
-    const analysis = JSON.parse(result.content) as ProspectAnalysis;
+    const analysis = parseJSONFromLLM(result.content) as ProspectAnalysis;
     return analysis;
-  } catch {
+  } catch (e) {
+    console.error("[AI] Failed to parse prospect analysis. Full raw response:\n", result.content);
     throw new AppError(502, "AI returned invalid JSON for prospect analysis");
   }
 }
@@ -201,60 +272,28 @@ export async function generateMessages(
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     {
       role: "system",
-      content: `You are an expert B2B sales copywriter crafting a personalized LinkedIn messaging sequence. 
+      content: `You are a B2B sales copywriter. You MUST respond with ONLY a JSON object, no other text.
 
-## Tone of Voice Instructions
-${tovInstructions}
+Tone: ${tovInstructions}
+Company: ${companyContext}
+Prospect: ${prospect.full_name || "prospect"}, ${prospect.current_position || "professional"} at ${prospect.current_company || "company"}
+Analysis: ${JSON.stringify(analysis)}
 
-## Your Company Context
-${companyContext}
+Generate ${sequenceLength} LinkedIn messages. Message types: ${messageTypes.join(", ")}
 
-## Prospect Analysis
-${JSON.stringify(analysis, null, 2)}
-
-## Task
-Generate a ${sequenceLength}-message LinkedIn outreach sequence for ${prospect.full_name || "this prospect"} (${prospect.current_position || "professional"} at ${prospect.current_company || "their company"}).
-
-Each message should:
-1. Build on the previous one (escalating value and urgency)
-2. Use specific personalization from the prospect analysis
-3. Follow the tone of voice instructions precisely
-4. Be concise and appropriate for LinkedIn messaging (max 300 chars for connection request, max 500 chars for follow-ups)
-
-Respond with a JSON object:
-{
-  "messages": [
-    {
-      "step_number": 1,
-      "message_type": "${messageTypes[0] || "connection_request"}",
-      "subject": null,
-      "body": "the message text",
-      "thinking_process": "explain your reasoning: why this approach, what personalization you used and why, how you applied the tone settings",
-      "confidence_score": 0.85,
-      "personalization_points": [
-        {
-          "point": "what was personalized",
-          "source": "where the data came from",
-          "reasoning": "why this personalization was chosen"
-        }
-      ]
-    }
-  ],
-  "overall_confidence": 0.82
-}
-
-Message types in order: ${messageTypes.join(", ")}`,
+Return this exact JSON structure:
+{"messages":[{"step_number":1,"message_type":"${messageTypes[0] || "connection_request"}","subject":null,"body":"message text here","thinking_process":"reasoning here","confidence_score":0.85,"personalization_points":[{"point":"what","source":"where","reasoning":"why"}]}],"overall_confidence":0.82}`,
     },
     {
       role: "user",
-      content: `Generate the ${sequenceLength}-message outreach sequence now. Remember to show your thinking process for each message.`,
+      content: `Generate the ${sequenceLength}-message sequence as JSON now.`,
     },
   ];
 
-  const result = await callOpenAI(messages, sequenceId, "sequence_generation");
+  const result = await callOllama(messages, sequenceId, "sequence_generation");
 
   try {
-    const parsed = JSON.parse(result.content) as SequenceGenerationResult;
+    const parsed = parseJSONFromLLM(result.content) as SequenceGenerationResult;
 
     // Validate structure
     if (!parsed.messages || !Array.isArray(parsed.messages)) {
@@ -262,7 +301,8 @@ Message types in order: ${messageTypes.join(", ")}`,
     }
 
     return parsed;
-  } catch {
+  } catch (e) {
+    console.error("[AI] Failed to parse sequence generation. Full raw response:\n", result.content);
     throw new AppError(502, "AI returned invalid JSON for sequence generation");
   }
 }

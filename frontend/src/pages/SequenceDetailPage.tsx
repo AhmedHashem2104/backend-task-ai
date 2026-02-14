@@ -132,9 +132,9 @@ export default function SequenceDetailPage() {
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {[
           { icon: Target, label: "Confidence", value: formatConfidence(sequence.overall_confidence) },
-          { icon: MessageSquare, label: "Messages", value: String(sequence.messages.length) },
-          { icon: Brain, label: "Tokens Used", value: sequence.ai_metadata.total_tokens.toLocaleString() },
-          { icon: Coins, label: "Est. Cost", value: formatCost(sequence.ai_metadata.total_cost_usd) },
+          { icon: MessageSquare, label: "Messages", value: String((sequence.messages ?? []).length) },
+          { icon: Brain, label: "Tokens Used", value: (sequence.ai_metadata?.total_tokens ?? 0).toLocaleString() },
+          { icon: Coins, label: "Est. Cost", value: formatCost(sequence.ai_metadata?.total_cost_usd ?? 0) },
         ].map(({ icon: Icon, label, value }) => (
           <Card key={label} className="text-center">
             <CardContent className="pt-6">
@@ -164,7 +164,7 @@ export default function SequenceDetailPage() {
               <div>
                 <h4 className="mb-2 text-sm font-semibold text-foreground">Key Interests</h4>
                 <ul className="space-y-1">
-                  {sequence.prospect_analysis.key_interests.map((interest, i) => (
+                  {(sequence.prospect_analysis.key_interests ?? []).map((interest, i) => (
                     <li key={i} className="flex items-start gap-1.5 text-sm text-muted-foreground">
                       <span className="mt-0.5 text-primary">&#8226;</span>
                       {interest}
@@ -175,7 +175,7 @@ export default function SequenceDetailPage() {
               <div>
                 <h4 className="mb-2 text-sm font-semibold text-foreground">Pain Points</h4>
                 <ul className="space-y-1">
-                  {sequence.prospect_analysis.potential_pain_points.map((point, i) => (
+                  {(sequence.prospect_analysis.potential_pain_points ?? []).map((point, i) => (
                     <li key={i} className="flex items-start gap-1.5 text-sm text-muted-foreground">
                       <span className="mt-0.5 text-orange-500">&#8226;</span>
                       {point}
@@ -185,13 +185,13 @@ export default function SequenceDetailPage() {
               </div>
             </div>
 
-            {sequence.prospect_analysis.personalization_hooks.length > 0 && (
+            {(sequence.prospect_analysis.personalization_hooks ?? []).length > 0 && (
               <div>
                 <h4 className="mb-2 text-sm font-semibold text-foreground">
                   Personalization Hooks
                 </h4>
                 <div className="space-y-2">
-                  {sequence.prospect_analysis.personalization_hooks.map((hook, i) => (
+                  {(sequence.prospect_analysis.personalization_hooks ?? []).map((hook, i) => (
                     <div key={i} className="rounded-lg bg-secondary p-3">
                       <p className="text-sm font-medium text-foreground">{hook.hook}</p>
                       <p className="mt-1 text-xs text-muted-foreground">
@@ -213,7 +213,7 @@ export default function SequenceDetailPage() {
           Message Sequence
         </h2>
 
-        {sequence.messages.map((msg) => {
+        {(sequence.messages ?? []).map((msg) => {
           const confVariant =
             msg.confidence_score >= 0.8
               ? "success"
@@ -271,13 +271,13 @@ export default function SequenceDetailPage() {
                       </p>
                     </div>
 
-                    {msg.personalization_points.length > 0 && (
+                    {(msg.personalization_points ?? []).length > 0 && (
                       <div>
                         <h4 className="mb-2 text-sm font-semibold text-foreground">
                           Personalization Points
                         </h4>
                         <div className="space-y-2">
-                          {msg.personalization_points.map((pp, i) => (
+                          {(msg.personalization_points ?? []).map((pp, i) => (
                             <div key={i} className="flex items-start gap-2 text-sm">
                               <Target className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                               <div>
