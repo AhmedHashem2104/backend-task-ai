@@ -1,21 +1,21 @@
 ---
 name: LinkedIn Sequence Generator
-overview: Build a monorepo with an Express/TypeScript backend (SQLite + Drizzle ORM + OpenAI + Proxycurl) and a React/Vite/TypeScript frontend providing a full UI for generating, viewing, and managing personalized LinkedIn messaging sequences.
+overview: Build a monorepo with an Express/TypeScript backend (SQLite + Drizzle ORM + Ollama/Llama 3.2 + Synthetic LinkedIn Profile Generator) and a React/Vite/TypeScript frontend providing a full UI for generating, viewing, and managing personalized LinkedIn messaging sequences.
 todos:
   - id: backend-scaffold
-    content: "Scaffold backend: package.json (express, drizzle-orm, better-sqlite3, openai, zod, nanoid, cors, dotenv), tsconfig, Express app entry with middleware"
+    content: "Scaffold backend: package.json (express, drizzle-orm, better-sqlite3, openai SDK for Ollama, zod, nanoid, cors, dotenv), tsconfig, Express app entry with middleware"
     status: completed
   - id: db-schema
     content: Define Drizzle ORM SQLite schema for all 5 tables (prospects, tov_configs, message_sequences, sequence_messages, ai_generations) + generate/run migrations
     status: completed
   - id: linkedin-service
-    content: Build Proxycurl integration service with prospect caching in SQLite
+    content: Build synthetic LinkedIn profile generator service with prospect caching in SQLite (replaces Proxycurl which was shut down July 2025)
     status: completed
   - id: tov-translator
     content: Build TOV numeric-to-natural-language translator with threshold ranges
     status: completed
   - id: ai-service
-    content: "Build OpenAI service: structured JSON output, retries with backoff, token tracking, cost calculation"
+    content: "Build Ollama/Llama 3.2 AI service (via OpenAI-compatible API): structured JSON output, retries with backoff, token tracking"
     status: completed
   - id: sequence-generator
     content: "Build orchestrator: two-pass AI flow (analysis then generation), full DB writes, status management"
@@ -58,8 +58,8 @@ isProject: false
 - **Frontend**: React + Vite + TypeScript
 - **Database**: SQLite (via `better-sqlite3`)
 - **ORM**: Drizzle ORM (supports SQLite natively, type-safe)
-- **AI**: OpenAI API (`gpt-4o-mini` primary, `gpt-4o` fallback)
-- **LinkedIn Data**: Proxycurl API
+- **AI**: Ollama (local) with `llama3.2` model via OpenAI-compatible API (`http://localhost:11434/v1`)
+- **LinkedIn Data**: Synthetic profile generator (deterministic profiles from LinkedIn usernames; Proxycurl was shut down July 2025 after LinkedIn lawsuit)
 - **Validation**: Zod (shared schema validation)
 - **Styling**: Tailwind CSS + shadcn/ui (fast, polished UI)
 
@@ -143,7 +143,7 @@ SQLite does not have a native JSONB type. We use TEXT columns for JSON data and 
 - `current_position` TEXT
 - `location` TEXT
 - `industry` TEXT
-- `profile_data` TEXT (JSON) -- full raw Proxycurl response
+- `profile_data` TEXT (JSON) -- full raw generated profile data
 - `created_at` TEXT (ISO 8601)
 - `updated_at` TEXT (ISO 8601)
 
@@ -271,15 +271,15 @@ flowchart TD
     A["POST /api/sequences/generate"] --> B["Validate input via Zod"]
     B --> C{"Prospect cached in SQLite?"}
     C -- Yes --> E["Load cached prospect"]
-    C -- No --> D["Fetch from Proxycurl API"]
+    C -- No --> D["Generate synthetic profile from LinkedIn username"]
     D --> D2["Insert prospect into DB"]
     D2 --> E
     E --> F["Create or resolve TOV config"]
     F --> G["Insert sequence record status=generating"]
     G --> H["AI Pass 1: Analyze prospect profile"]
-    H --> I["Store prospect_analysis + log to ai_generations"]
-    I --> J["AI Pass 2: Generate message sequence with TOV"]
-    J --> K["Store messages with thinking + confidence + log to ai_generations"]
+    H --> I["Store prospect_analysis + log to ai_generations (Ollama)"]
+    I --> J["AI Pass 2: Generate message sequence with TOV (Llama 3.2)"]
+    J --> K["Store messages with thinking + confidence + log to ai_generations (Ollama)"]
     K --> L["Update sequence status=completed"]
     L --> M["Return full response to client"]
 ```
@@ -288,11 +288,11 @@ flowchart TD
 
 ## AI Integration: Two-Pass Approach
 
-**Pass 1 -- Prospect Analysis**: Sends prospect profile to OpenAI, asks for structured JSON output containing professional summary, pain points, personalization hooks, and recommended messaging angles.
+**Pass 1 -- Prospect Analysis**: Sends prospect profile to Ollama (Llama 3.2), asks for structured JSON output containing professional summary, pain points, personalization hooks, and recommended messaging angles.
 
 **Pass 2 -- Sequence Generation**: Combines Pass 1 analysis + TOV translation + company context into a prompt that generates the full message sequence. Each message includes body, thinking process, confidence score, and personalization points used.
 
-Both passes use OpenAI's `response_format: { type: "json_object" }` for reliable structured output. Token counts and costs are tracked per call in `ai_generations`.
+Both passes use the OpenAI-compatible API's `response_format: { type: "json_object" }` for reliable structured output via Ollama. Token counts are tracked per call in `ai_generations`. Since Ollama runs locally, cost is effectively $0.
 
 ## TOV Translation
 
@@ -336,8 +336,8 @@ All axes combine into a tone paragraph injected into the system prompt.
 
 ## Error Handling
 
-- **Proxycurl errors**: 502 with descriptive message; prospect data cached to avoid repeated failures
-- **OpenAI errors**: Retry 3x with exponential backoff; fallback from `gpt-4o-mini` to `gpt-4o`; every attempt logged in `ai_generations`
+- **Profile generation errors**: 502 with descriptive message; prospect data cached to avoid repeated failures
+- **Ollama/Llama errors**: Retry 3x with exponential backoff (2-min timeout per call — Ollama can be slow on first inference); every attempt logged in `ai_generations`
 - **Validation errors**: 400 with Zod error details
 - **Global**: Express error middleware catches unhandled errors, returns consistent JSON error format
 
