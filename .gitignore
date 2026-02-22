@@ -6,8 +6,6 @@ dist/
 dist-ssr/
 
 # Environment variables
-.env
-.env.local
 *.local
 
 # SQLite database files
@@ -39,3 +37,4 @@ Thumbs.db
 
 # Misc
 *.tsbuildinfo
+config.bat
