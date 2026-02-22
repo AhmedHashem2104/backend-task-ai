@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   History,
@@ -19,24 +19,63 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+type FetchState = {
+  sequences: SequenceListItem[];
+  totalPages: number;
+  total: number;
+  loading: boolean;
+  error: string | null;
+};
+
+type FetchAction =
+  | { type: "FETCH_START" }
+  | { type: "FETCH_SUCCESS"; payload: { sequences: SequenceListItem[]; totalPages: number; total: number } }
+  | { type: "FETCH_ERROR"; payload: string };
+
+const initialFetchState: FetchState = {
+  sequences: [],
+  totalPages: 1,
+  total: 0,
+  loading: true,
+  error: null,
+};
+
+function fetchReducer(state: FetchState, action: FetchAction): FetchState {
+  switch (action.type) {
+    case "FETCH_START":
+      return { ...state, loading: true, error: null };
+    case "FETCH_SUCCESS":
+      return {
+        sequences: action.payload.sequences,
+        totalPages: action.payload.totalPages,
+        total: action.payload.total,
+        loading: false,
+        error: null,
+      };
+    case "FETCH_ERROR":
+      return { ...state, loading: false, error: action.payload };
+  }
+}
+
 export default function HistoryPage() {
-  const [sequences, setSequences] = useState<SequenceListItem[]>([]);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(fetchReducer, initialFetchState);
+  const { sequences, totalPages, total, loading, error } = state;
 
   useEffect(() => {
-    setLoading(true);
+    dispatch({ type: "FETCH_START" });
     getSequences(page, 10)
-      .then((data) => {
-        setSequences(data.sequences);
-        setTotalPages(data.pagination.total_pages);
-        setTotal(data.pagination.total);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .then((data) =>
+        dispatch({
+          type: "FETCH_SUCCESS",
+          payload: {
+            sequences: data.sequences,
+            totalPages: data.pagination.total_pages,
+            total: data.pagination.total,
+          },
+        })
+      )
+      .catch((err) => dispatch({ type: "FETCH_ERROR", payload: err.message }));
   }, [page]);
 
   return (
@@ -153,7 +192,6 @@ export default function HistoryPage() {
             })}
           </div>
 
-          {/* Pagination */}
           {totalPages > 1 && (
             <div className="mt-8 flex items-center justify-center gap-4">
               <Button

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useReducer } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Loader2,
@@ -55,11 +55,64 @@ const TOV_AXES = [
 ] as const;
 
 const GENERATION_STEPS = [
-  { icon: Search, label: "Fetching LinkedIn profile", duration: 5000 },
-  { icon: Brain, label: "Analyzing prospect with AI", duration: 20000 },
-  { icon: MessageSquare, label: "Generating personalized messages", duration: 30000 },
-  { icon: CheckCircle2, label: "Finalizing sequence", duration: 5000 },
+  { id: "fetch", icon: Search, label: "Fetching LinkedIn profile", duration: 5000 },
+  { id: "analyze", icon: Brain, label: "Analyzing prospect with AI", duration: 20000 },
+  { id: "generate", icon: MessageSquare, label: "Generating personalized messages", duration: 30000 },
+  { id: "finalize", icon: CheckCircle2, label: "Finalizing sequence", duration: 5000 },
 ];
+
+// ---- Form state reducer ----
+type FormState = {
+  prospectUrl: string;
+  companyContext: string;
+  sequenceLength: number;
+  tov: TovConfigInput;
+  loading: boolean;
+  error: string | null;
+};
+
+type FormAction =
+  | { type: "SET_PROSPECT_URL"; payload: string }
+  | { type: "SET_COMPANY_CONTEXT"; payload: string }
+  | { type: "SET_SEQUENCE_LENGTH"; payload: number }
+  | { type: "SET_TOV_AXIS"; key: keyof TovConfigInput; value: number }
+  | { type: "SUBMIT_START" }
+  | { type: "SUBMIT_ERROR"; payload: string }
+  | { type: "SUBMIT_END" }
+  | { type: "RESET" }
+  | { type: "LOAD_EXAMPLE" };
+
+const initialFormState: FormState = {
+  prospectUrl: EXAMPLE_URL,
+  companyContext: EXAMPLE_COMPANY_CONTEXT,
+  sequenceLength: EXAMPLE_SEQUENCE_LENGTH,
+  tov: { ...DEFAULT_TOV },
+  loading: false,
+  error: null,
+};
+
+function formReducer(state: FormState, action: FormAction): FormState {
+  switch (action.type) {
+    case "SET_PROSPECT_URL":
+      return { ...state, prospectUrl: action.payload };
+    case "SET_COMPANY_CONTEXT":
+      return { ...state, companyContext: action.payload };
+    case "SET_SEQUENCE_LENGTH":
+      return { ...state, sequenceLength: action.payload };
+    case "SET_TOV_AXIS":
+      return { ...state, tov: { ...state.tov, [action.key]: action.value } };
+    case "SUBMIT_START":
+      return { ...state, loading: true, error: null };
+    case "SUBMIT_ERROR":
+      return { ...state, loading: false, error: action.payload };
+    case "SUBMIT_END":
+      return { ...state, loading: false };
+    case "RESET":
+      return { ...state, prospectUrl: "", companyContext: "", sequenceLength: 3, tov: { ...EMPTY_TOV }, error: null };
+    case "LOAD_EXAMPLE":
+      return { ...initialFormState };
+  }
+}
 
 function GeneratingOverlay() {
   const [currentStep, setCurrentStep] = useState(0);
@@ -107,7 +160,7 @@ function GeneratingOverlay() {
 
               return (
                 <div
-                  key={i}
+                  key={step.id}
                   className={`flex items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-500 ${
                     isActive
                       ? "bg-primary/10 ring-1 ring-primary/20"
@@ -156,18 +209,13 @@ function GeneratingOverlay() {
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const [prospectUrl, setProspectUrl] = useState(EXAMPLE_URL);
-  const [companyContext, setCompanyContext] = useState(EXAMPLE_COMPANY_CONTEXT);
-  const [sequenceLength, setSequenceLength] = useState(EXAMPLE_SEQUENCE_LENGTH);
-  const [tov, setTov] = useState<TovConfigInput>({ ...DEFAULT_TOV });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(formReducer, initialFormState);
+  const { prospectUrl, companyContext, sequenceLength, tov, loading, error } = state;
   const formRef = useRef<HTMLFormElement>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setLoading(true);
+    dispatch({ type: "SUBMIT_START" });
 
     try {
       const result = await generateSequence({
@@ -178,30 +226,10 @@ export default function HomePage() {
       });
       navigate(`/sequences/${result.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      dispatch({ type: "SUBMIT_ERROR", payload: err instanceof Error ? err.message : "Something went wrong" });
     } finally {
-      setLoading(false);
+      dispatch({ type: "SUBMIT_END" });
     }
-  };
-
-  const handleReset = () => {
-    setProspectUrl("");
-    setCompanyContext("");
-    setSequenceLength(3);
-    setTov({ ...EMPTY_TOV });
-    setError(null);
-  };
-
-  const handleLoadExample = () => {
-    setProspectUrl(EXAMPLE_URL);
-    setCompanyContext(EXAMPLE_COMPANY_CONTEXT);
-    setSequenceLength(EXAMPLE_SEQUENCE_LENGTH);
-    setTov({ ...DEFAULT_TOV });
-    setError(null);
-  };
-
-  const updateTov = (key: keyof TovConfigInput, value: number) => {
-    setTov((prev) => ({ ...prev, [key]: value }));
   };
 
   const isEmpty = !prospectUrl && !companyContext;
@@ -239,7 +267,7 @@ export default function HomePage() {
                 id="prospect-url"
                 type="url"
                 value={prospectUrl}
-                onChange={(e) => setProspectUrl(e.target.value)}
+                onChange={(e) => dispatch({ type: "SET_PROSPECT_URL", payload: e.target.value })}
                 placeholder="https://linkedin.com/in/john-doe"
                 required
                 className="h-11 border-border/50 bg-secondary/30 transition-colors focus:bg-background"
@@ -262,7 +290,7 @@ export default function HomePage() {
               <Textarea
                 id="company-context"
                 value={companyContext}
-                onChange={(e) => setCompanyContext(e.target.value)}
+                onChange={(e) => dispatch({ type: "SET_COMPANY_CONTEXT", payload: e.target.value })}
                 placeholder="Describe what your company does and the value proposition..."
                 required
                 rows={3}
@@ -287,7 +315,7 @@ export default function HomePage() {
                 max={6}
                 step={1}
                 value={[sequenceLength]}
-                onValueChange={([v]: number[]) => setSequenceLength(v)}
+                onValueChange={([v]: number[]) => dispatch({ type: "SET_SEQUENCE_LENGTH", payload: v })}
               />
               <div className="mt-2 flex justify-between text-xs text-muted-foreground">
                 <span>1 msg</span>
@@ -324,7 +352,7 @@ export default function HomePage() {
                       max={100}
                       step={1}
                       value={[value * 100]}
-                      onValueChange={([v]: number[]) => updateTov(key, v / 100)}
+                      onValueChange={([v]: number[]) => dispatch({ type: "SET_TOV_AXIS", key, value: v / 100 })}
                     />
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>{lowLabel}</span>
@@ -369,7 +397,7 @@ export default function HomePage() {
                 type="button"
                 variant="outline"
                 size="lg"
-                onClick={handleLoadExample}
+                onClick={() => dispatch({ type: "LOAD_EXAMPLE" })}
                 title="Load example data"
                 className="shadow-sm"
               >
@@ -381,7 +409,7 @@ export default function HomePage() {
                 type="button"
                 variant="outline"
                 size="lg"
-                onClick={handleReset}
+                onClick={() => dispatch({ type: "RESET" })}
                 title="Clear all fields"
                 className="shadow-sm"
               >
